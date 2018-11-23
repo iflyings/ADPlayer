@@ -1,9 +1,12 @@
 attribute vec4 aPosition;
-attribute vec2 aTexCoord;
+attribute vec4 aTexCoord;
+uniform mat4 uTexMatrix;
+uniform mat4 uPosMatrix;
 
 varying vec2 vTexCoord;
 
 void main() {
-    vTexCoord = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
-    gl_Position = aPosition;
+    vTexCoord = (uTexMatrix * aTexCoord).xy;
+    vTexCoord = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
+    gl_Position = uPosMatrix * aPosition;
 }

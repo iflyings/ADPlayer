@@ -1,181 +1,195 @@
 package com.android.iflyings.player
 
-import android.content.Context
 import android.graphics.Rect
-import android.os.Looper
 import com.android.iflyings.player.info.FontInfo
 import com.android.iflyings.player.info.MediaInfo
-import com.android.iflyings.player.info.WindowInfo
+import com.android.iflyings.player.model.WindowData
+import com.android.iflyings.player.transformer.FontTransformer
+import com.orhanobut.logger.Logger
+import kotlinx.coroutines.*
 
-class MediaWindow(callback: WindowCallback) :
-        Thread(), MediaInfo.OnMediaListener, AnimationHandler.OnAnimationListener {
+class MediaWindow(callback: WindowCallback) {
 
-    override fun runInUserThread(r: Runnable) {
-        synchronized(mHandlerLock) {
-            mHandler?.post(r)
-        }
-    }
-    override fun runInGLThread(r: Runnable) {
-        mCallback.runInGLThread(r)
-    }
-    override fun onCreated(m: MediaInfo) {
-        if (m is FontInfo) {
-            synchronized(mFontLock) {
-                m.start()
-                isDrawFontInfo = true
-            }
-        } else {
-            if (!isStartPlaying) {
-                synchronized(mHandlerLock) {
-                    mHandler?.scroll(40)
-                }
-                isStartPlaying = true
-            }
-        }
-    }
-    override fun onCompleted(m: MediaInfo) {
-        if (m is FontInfo) {
-            synchronized(mFontLock) {
-                isDrawFontInfo = false
-                mFontInfo!!.destroy()
-                mFontInfo = null
-            }
-        } else {
-            completion()
-        }
-    }
-    override fun onErrored(m: MediaInfo, msg: String) {
-        mCallback.showMessage(msg)
-        completion()
-    }
-    override fun onDestroyed(m: MediaInfo) {
+    private val mWindowData = WindowData()
+    private val mWindowCallback = callback
+    private val mScroller = MediaScroller()
 
-    }
-
-    override fun startAnimation() {
-        nextModel!!.start()
-        mAnimationType = nextModel!!.getAnimationType()
-        mAnimationRatio = 0.0f
-    }
-    override fun updateAnimation(ratio: Float) {
-        mAnimationRatio = ratio
-    }
-    override fun endAnimation() {
-        val tmpMedia = nowModel
-        synchronized(mModelLock) {
-            mAnimationRatio = 1.0f
-            nowModel = nextModel
-            nextModel = mMediaInfoLists[mMediaModeIndex]
-            mMediaModeIndex = (mMediaModeIndex + 1) % mMediaInfoLists.size
-        }
-        tmpMedia?.destroy()
-        nextModel!!.create()
-    }
-
-    private val mWindowInfo = WindowInfo()
-
-    private val mHandlerLock = Object()
-    private var mHandler: AnimationHandler? = null
-
-    private val mCallback = callback
-    private val mMediaInfoLists = mutableListOf<MediaInfo>()
+    private val mAllMediaLists = mutableListOf<MediaInfo>()
     private var mMediaModeIndex = 0
-    private lateinit var mAnimationType: MediaInfo.Animation
 
-    private var mFontInfo: FontInfo? = null
-    private val mFontLock = Object()
-    private val mModelLock = Object()
-    private var nowModel: MediaInfo? = null
-    private var nextModel: MediaInfo? = null
-    @Volatile private var mAnimationRatio = -1.0f
-    @Volatile private var isStartPlaying = false
-    @Volatile private var isDrawFontInfo = false
+    private val mMediaLock = Object()
+    private var mFontHolder: MediaHolder? = null
+    private var mNowMedia: MediaHolder? = null
+    private var mNextMedia: MediaHolder? = null
 
-    private fun completion() {
-        synchronized(mHandlerLock) {
-            mHandler?.scroll(40)
+    private var mMediaTransformer: MediaTransformer? = null
+    private var mAnimationJob: Job? = null
+
+    data class MediaHolder(val mediaInfo: MediaInfo, val itemIndex: Int) {
+        init {
+            GlobalScope.launch(Dispatchers.Default) {
+                mediaInfo.mediaCreate()
+            }
         }
+
+        fun mediaDraw(transformer: MediaTransformer, textureIndex: Int): Int {
+            transformer.transformMedia(mediaInfo, position)
+            return mediaInfo.draw(textureIndex)
+        }
+
+        fun mediaDestroy() {
+            GlobalScope.launch(Dispatchers.Default) {
+                mediaInfo.mediaDestroy()
+            }
+        }
+
+        var position = -1f
     }
 
-    override fun run() {
-        super.run()
-        Looper.prepare()
-        mHandler = AnimationHandler(this)
-
-        nextModel = mMediaInfoLists[mMediaModeIndex]
-        mMediaModeIndex = (mMediaModeIndex + 1) % mMediaInfoLists.size
-        mAnimationType = nextModel!!.getAnimationType()
-        nextModel!!.create()
-
-        Looper.loop()
-    }
-
-    fun release() {
-        isStartPlaying = false
-        mFontInfo?.destroy()
-        for (mediaInfo in mMediaInfoLists) {
-            mediaInfo.destroy()
+    fun start() {
+        mMediaModeIndex = 0
+        if (mAllMediaLists.size > 0) {
+            mNextMedia = MediaHolder(mAllMediaLists[mMediaModeIndex], mMediaModeIndex)
         }
-        synchronized(mHandlerLock) {
-            mHandler?.looper?.quitSafely()
-            mHandler = null
-        }
-        //mHandler.removeCallbacksAndMessages(null)
     }
-    fun add(context: Context, filePath: String, rect: Rect? = null) {
-        val mediaInfo = MediaInfo.from(context, filePath, mWindowInfo, this)
-        mediaInfo.setTextureShow(rect)
-        mMediaInfoLists.add(mediaInfo)
+    fun stop() {
+        mAnimationJob?.cancel()
+        mFontHolder?.mediaDestroy()
+        mFontHolder = null
+        for (mediaInfo in mAllMediaLists) {
+            mediaInfo.mediaDestroy()
+        }
+        mAllMediaLists.clear()
+    }
+    fun add(mediaInfo: MediaInfo) {
+        mediaInfo.setWindowData(mWindowData)
+        mediaInfo.setOnMediaListener(object: MediaInfo.OnMediaListener {
+            override fun runInGLThread(r: Runnable) {
+                mWindowCallback.runInGLThread(r)
+            }
+            override fun onCreated(m: MediaInfo) {
+                mMediaTransformer = m.getMediaTransformer()
+                startAnimation()
+            }
+            override fun onCompleted(m: MediaInfo) {
+                synchronized(mMediaLock) {
+                    val nextItem = (mMediaModeIndex + 1) % mAllMediaLists.size
+                    mNextMedia = MediaHolder(mAllMediaLists[nextItem], nextItem)
+                }
+            }
+            override fun onFailed(m: MediaInfo, msg: String) {
+                synchronized(mMediaLock) {
+                    val nextItem = (mMediaModeIndex + 1) % mAllMediaLists.size
+                    mNextMedia = MediaHolder(mAllMediaLists[nextItem], nextItem)
+                }
+            }
+            override fun onDestroyed(m: MediaInfo) {
+
+            }
+        })
+        mAllMediaLists.add(mediaInfo)
     }
     fun setScreenSize(width: Int, height: Int) {
-        mWindowInfo.setScreenSize(width, height)
-    }
-    fun setWindowSize(rect: Rect?) {
-        mWindowInfo.setWindowSize(rect)
-        for (mediaInfo in mMediaInfoLists) {
+        mWindowData.setScreenSize(width, height)
+        for (mediaInfo in mAllMediaLists) {
             mediaInfo.notifyMediaModelUpdated()
         }
     }
-    fun setFontInfo(textString: String, textSize: Int) {
-        val tmpInfo = mFontInfo
-        synchronized (mFontLock) {
-            isDrawFontInfo = false
-            mFontInfo = FontInfo(textString, textSize, mWindowInfo, this)
+    fun setWindowSize(rect: Rect?) {
+        mWindowData.setWindowSize(rect)
+        for (mediaInfo in mAllMediaLists) {
+            mediaInfo.notifyMediaModelUpdated()
         }
-        tmpInfo?.destroy()
-        mFontInfo!!.create()
+    }
+
+    private fun updatePosition(p: Float) {
+        mNowMedia?.apply {
+            this.position = -p
+        }
+        mNextMedia?.apply {
+            this.position = 1 - p
+        }
+    }
+    private fun startAnimation() {
+        mScroller.startScroll(0f, 3000)
+        mAnimationJob = GlobalScope.launch(Dispatchers.Default) {
+            while (mScroller.computeScrollOffset()) {
+                synchronized(mMediaLock) {
+                    updatePosition(mScroller.currX)
+                }
+                delay(16)
+            }
+            synchronized(mMediaLock) {
+                mNowMedia?.mediaDestroy()
+                mNowMedia = mNextMedia
+                mNextMedia = null
+                mMediaModeIndex = (mMediaModeIndex + 1) % mAllMediaLists.size
+            }
+            mAnimationJob = null
+        }
+    }
+
+    fun setFontInfo(textString: String, textSize: Int) {
+        mFontHolder?.mediaDestroy()
+        val fontInfo = FontInfo(textString, textSize).apply {
+            setWindowData(mWindowData)
+            setOnMediaListener(object : MediaInfo.OnMediaListener {
+                override fun runInGLThread(r: Runnable) {
+                    mWindowCallback.runInGLThread(r)
+                }
+                override fun onCreated(m: MediaInfo) {
+                }
+                override fun onCompleted(m: MediaInfo) {
+                    mFontHolder?.mediaDestroy()
+                    mFontHolder = null
+                }
+                override fun onFailed(m: MediaInfo, msg: String) {
+                    mFontHolder?.mediaDestroy()
+                    mFontHolder = null
+                }
+                override fun onDestroyed(m: MediaInfo) {
+                    mFontHolder?.mediaDestroy()
+                    mFontHolder = null
+                }
+            })
+        }
+        mFontHolder = MediaHolder(fontInfo, -1)
     }
 
     private fun drawFontInfo(textureIndex: Int): Int {
-        synchronized(mFontLock) {
-            if (isDrawFontInfo) {
-                return mAnimationType.font(mFontInfo!!, textureIndex)
-            }
-            return textureIndex
-        }
-    }
-    private fun drawMediaInfo(textureIndex: Int): Int {
         var index = textureIndex
-        synchronized(mModelLock) {
-            if (mAnimationRatio >= 1.0f) {
-                if (nowModel != null) {
-                    index = mAnimationType.normal(nowModel!!, textureIndex)
-                }
-            } else {
-                index = mAnimationType.update(nowModel, nextModel, index, mAnimationRatio)
-            }
+        mFontHolder?.apply {
+            index = mediaDraw(FontTransformer(), textureIndex)
         }
         return index
+    }
+    private fun drawMediaInfo(textureIndex: Int): Int {
+        mMediaTransformer?.let {
+            synchronized(mMediaLock) {
+                var index = textureIndex
+                mNowMedia?.apply {
+                    index = mediaDraw(it, index)
+                }
+                mNextMedia?.apply {
+                    index = mediaDraw(it, index)
+                }
+                return index
+            }
+        }
+        return textureIndex
     }
     // 在 GLThread 中运行
     fun draw(textureIndex: Int): Int {
         var index = textureIndex
-        if (!isStartPlaying) {
-            return index
-        }
         index = drawMediaInfo(index)
         index = drawFontInfo(index)
         return index
+    }
+
+    interface MediaTransformer {
+
+        fun transformMedia(mediaInfo: MediaInfo, position: Float)
+
     }
 
     interface WindowCallback {

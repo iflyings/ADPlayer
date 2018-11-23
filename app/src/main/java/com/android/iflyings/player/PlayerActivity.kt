@@ -2,7 +2,6 @@ package com.android.iflyings.player
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Rect
 import android.support.v4.app.ActivityCompat
 import android.support.v4.content.ContextCompat
 import android.support.v7.app.AlertDialog
@@ -12,22 +11,19 @@ import android.os.Environment
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
-import com.android.iflyings.R
-import com.android.iflyings.player.info.MediaInfo
+import com.android.iflyings.player.info.ImageInfo
+import com.android.iflyings.player.info.VideoInfo
 import com.android.iflyings.player.utils.FileUtils
+import kotlinx.android.synthetic.main.activity_player.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class PlayerActivity : AppCompatActivity(), MediaWindow.WindowCallback {
-    private lateinit var mGLPlayerView: GLPlayerView
-    private lateinit var mWaitingView: View
-
-    private val mMediaModelLists = mutableListOf<String>()
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_player)
-
-        mWaitingView = findViewById(R.id.ll_container)
-        mGLPlayerView = findViewById(R.id.psv_player)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -43,7 +39,7 @@ class PlayerActivity : AppCompatActivity(), MediaWindow.WindowCallback {
                         MY_PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE)
             }
         } else {
-            mGLPlayerView.post { initData() }
+            psvPlayer.post { initData() }
         }
     }
 
@@ -64,29 +60,27 @@ class PlayerActivity : AppCompatActivity(), MediaWindow.WindowCallback {
     }
 
     private fun initData() {
-        mWaitingView.visibility = View.VISIBLE
-        Thread(Runnable {
-            mMediaModelLists.clear()
-            //"/mnt/usb/D626-03AD"
-            //Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toString()
+        waitContainer.visibility = View.VISIBLE
+        GlobalScope.launch(Dispatchers.Default) {
+            val mediaWindow = MediaWindow(this@PlayerActivity)
+            //val filePath = "/mnt/usb/0000-0000/4K"
             val filePath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toString()
-            mMediaModelLists.addAll(FileUtils.getAllFileInFolder(filePath, resources.getStringArray(R.array.type_image)))
-            //mMediaModelLists.addAll(FileUtils.getAllFileInFolder(filePath, resources.getStringArray(R.array.type_video)))
-
-            runOnUiThread {
-                val window = MediaWindow(this)
-                window.setScreenSize(mGLPlayerView.width, mGLPlayerView.height)
-                mMediaModelLists.forEach { path -> window.add(this@PlayerActivity, path) }
-                mGLPlayerView.addWindow(window)
-                mGLPlayerView.start()
-                mWaitingView.visibility = View.INVISIBLE
-                mGLPlayerView.postDelayed({ window.setFontInfo("java中国话yunÃÇŸŒú", 200) }, 3000)
+            //FileUtils.getAllFileInFolder(filePath, resources.getStringArray(R.array.type_video).toList())
+            //        .takeIf { it.isNotEmpty() }?.forEach { mediaWindow.add(VideoInfo(it)) }
+            FileUtils.getAllFileInFolder(filePath, resources.getStringArray(R.array.type_image).toList())
+                    .takeIf { it.isNotEmpty() }?.forEach { mediaWindow.add(ImageInfo(it)) }
+            psvPlayer.add(mediaWindow)
+            psvPlayer.start()
+            GlobalScope.launch(Dispatchers.Main) {
+                waitContainer.visibility = View.INVISIBLE
             }
-        }).start()
+            delay(5000)
+            mediaWindow.setFontInfo("java中国话yunÃÇŸŒú", 50)
+        }
     }
 
     override fun onBackPressed() {
-        mGLPlayerView.stop()
+        psvPlayer.stop()
         finish()
     }
 
@@ -94,7 +88,7 @@ class PlayerActivity : AppCompatActivity(), MediaWindow.WindowCallback {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
     override fun runInGLThread(r: Runnable) {
-        mGLPlayerView.queueEvent(r)
+        psvPlayer.queueEvent(r)
     }
 
     companion object {

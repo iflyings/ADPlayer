@@ -1,45 +1,49 @@
 package com.android.iflyings.player.info
 
-import android.graphics.Bitmap
-import com.android.iflyings.player.model.MediaModel
-import com.android.iflyings.player.shader.ShaderManager
 import com.android.iflyings.player.utils.BitmapUtils
 import com.android.iflyings.player.utils.TextureUtils
-import java.util.*
+import kotlinx.coroutines.*
 
-class ImageInfo(imagePath: String, winInfo: WindowInfo, listener: OnMediaListener) :
-        MediaInfo(winInfo, listener) {
+class ImageInfo(imagePath: String) : MediaInfo() {
+
     private val mImagePath = imagePath
-    private val playTime = 3000L
-    private val mTimer = Timer()
-    private var mBitmap: Bitmap? = null
+    private val mPlayTime = 5000L
+    private var mPlayJob: Job? = null
+    private var mTextureId = 0
 
     override fun mediaCreate() {
-        mBitmap = BitmapUtils.loadBitmapFromPath(mImagePath)
-        setTextureSize(mBitmap!!.width, mBitmap!!.height)
-        notifyMediaCreated()
-    }
-    override fun mediaBind() {
-        val textureId = TextureUtils.getTextureFromBitmap(mBitmap)
-        mBitmap!!.recycle()
-        notifyMediaBinded(textureId)
-    }
-    override fun mediaStart() {
-        mTimer.schedule(object: TimerTask() {
-            override fun run() {
-                notifyMediaCompleted()
-            }
-        }, playTime)
-    }
-    override fun mediaDraw(mediaModel: MediaModel, textureId: Int, textureIndex: Int) {
-        ShaderManager.instance.drawImage(mediaModel, textureId, textureIndex)
-    }
-    override fun mediaDestroy() {
-        mTimer.purge()
-        if (mBitmap != null) {
-            mBitmap!!.recycle()
-            mBitmap = null
+        BitmapUtils.loadBitmapFromPath(mImagePath).apply {
+            setTextureSize(width, height)
+            postInGLThread(Runnable {
+                mTextureId = TextureUtils.getTextureFromBitmap(this)
+                mPlayJob = GlobalScope.launch(Dispatchers.Default) {
+                    recycle()
+                    notifyMediaCreated()
+                    delay(mPlayTime)
+                    notifyMediaCompleted()
+                }
+            })
         }
-        notifyMediaDestroyed()
+    }
+
+    override fun mediaDraw(textureIndex: Int): Int {
+        if (mTextureId != 0) {
+            return drawImage(mTextureId, textureIndex)
+        }
+        return textureIndex
+    }
+
+    override fun mediaDestroy() {
+        mPlayJob?.cancel()
+        mPlayJob = null
+        postInGLThread(Runnable {
+            if (mTextureId != 0) {
+                TextureUtils.unloadTexture(mTextureId)
+                mTextureId = 0
+            }
+            GlobalScope.launch(Dispatchers.Default) {
+                notifyMediaDestroyed()
+            }
+        })
     }
 }

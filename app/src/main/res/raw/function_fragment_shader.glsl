@@ -46,6 +46,22 @@ void draw_shutter() {
         gl_FragColor.a = 1.0;
     }
 }
+// 去掉低亮度 [ 阀值，-，-，-]
+void draw_high_bright() {
+    vec3 color = texture2D(sTexture, vTexCoord).rgb;
+    float bright = .30 * color.r + .59 * color.g + .11 * color.b;
+    float threshold = 1.0 - ufPosition[0];
+    if (bright <= threshold) {
+        discard;
+    } else {
+        gl_FragColor.rgb = color;
+        if (bright - threshold <= 0.1) {
+            gl_FragColor.a = 10.0 * (bright - ufPosition[0]);
+        } else {
+            gl_FragColor.a = 1.0;
+        }
+    }
+}
 // 丢掉多余的颜色 [红色，绿色，蓝色，是否开启]
 void draw_threshold() {
     vec3 color = texture2D(sTexture, vTexCoord).rgb;
@@ -62,18 +78,20 @@ void main() {
     if (uiType == 0) {
         draw_normal();
     } else if (uiType == 1) {
-        draw_alpha();
-    } else if (uiType == 2) {
-        draw_circle();
-    } else if (uiType == 3) {
-        draw_mosaic();
-    } else if (uiType == 4) {
-        draw_cut_off();
-    } else if (uiType == 5) {
-        draw_shutter();
-   } else if (uiType == 6) {
-        draw_threshold();
-   } else {
         discard;
+    } else if (uiType == 2) {
+        draw_alpha();
+    } else if (uiType == 3) {
+        draw_circle();
+    } else if (uiType == 4) {
+        draw_mosaic();
+    } else if (uiType == 5) {
+        draw_cut_off();
+    } else if (uiType == 6) {
+        draw_shutter();
+    } else if (uiType == 7) {
+        draw_high_bright();
+    } else if (uiType == 8) {
+        draw_threshold();
     }
 }

@@ -2,8 +2,7 @@ package com.android.iflyings.player.shader
 
 import android.content.Context
 import android.opengl.GLES20
-import android.util.Log
-import com.android.iflyings.R
+import com.android.iflyings.player.R
 import com.android.iflyings.player.model.MediaModel
 import com.android.iflyings.player.utils.ShaderUtils
 import com.android.iflyings.player.utils.TextureUtils
@@ -30,7 +29,7 @@ internal class ImageShader(context: Context) {
         }
     }
 
-    fun create() {
+    fun create(): ImageShader {
         if (mProgramId == 0) {
             mProgramId = ShaderUtils.createProgram(mVertexShader, mFragmentShader)
             aPositionHandle = GLES20.glGetAttribLocation(mProgramId, "aPosition")
@@ -42,6 +41,7 @@ internal class ImageShader(context: Context) {
             uiTypeHandle = GLES20.glGetUniformLocation(mProgramId, "uiType")
             uvInputHandle = GLES20.glGetUniformLocation(mProgramId, "ufPosition")
         }
+        return this
     }
 
     fun draw(mediaModel: MediaModel, textureId: Int, textureIndex: Int) {

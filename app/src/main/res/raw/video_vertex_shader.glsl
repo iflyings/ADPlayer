@@ -7,6 +7,5 @@ varying vec2 vTexCoord;
 
 void main() {
     vTexCoord = (uTexMatrix * aTexCoord).xy;
-    vTexCoord = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
     gl_Position = uPosMatrix * aPosition;
 }

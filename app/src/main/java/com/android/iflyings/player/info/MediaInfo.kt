@@ -1,101 +1,117 @@
 package com.android.iflyings.player.info
 
-import android.content.Context
 import android.graphics.Rect
-import com.android.iflyings.R
+import com.android.iflyings.player.MediaWindow
 import com.android.iflyings.player.model.MediaModel
-import com.android.iflyings.player.utils.TextureUtils
-import java.util.*
+import com.android.iflyings.player.model.TextureData
+import com.android.iflyings.player.model.WindowData
+import com.android.iflyings.player.shader.ShaderManager
+import com.android.iflyings.player.transformer.*
+import kotlin.random.Random
 
-abstract class MediaInfo internal constructor(winInfo: WindowInfo, listener: OnMediaListener) {
-    protected val textureInfo = TextureInfo()
-    protected val windowInfo
-        get() = mMediaModel.windowInfo
-    protected val textureMatrix
+abstract class MediaInfo internal constructor() {
+    private val mMediaModel = MediaModel()
+    private val mTextureData = TextureData()
+    private lateinit var mWindowData: WindowData
+    private lateinit var mOnMediaListener: OnMediaListener
+
+    val windowLeft
+        get() = mWindowData.left
+    val windowRight
+        get() = mWindowData.right
+    val windowTop
+        get() = mWindowData.top
+    val windowBottom
+        get() = mWindowData.bottom
+    val windowWidth
+        get() = mWindowData.width
+    val windowHeight
+        get() = mWindowData.height
+    val textureLeft
+        get() = mTextureData.left
+    val textureRight
+        get() = mTextureData.right
+    val textureTop
+        get() = mTextureData.top
+    val textureBottom
+        get() = mTextureData.bottom
+    val textureWidth
+        get() = mTextureData.width
+    val textureHeight
+        get() = mTextureData.height
+
+    val textureMatrix
         get() = mMediaModel.textureMatrix
-    private val mMediaModel = MediaModel(winInfo, textureInfo)
 
-    private val mOnMediaListener = listener
-    private val mAnimationType = Animation.Random
-    private val mMediaLock = Object()
-    private var isPlaying = false
-    private var mTextureId = 0
-
-    fun getAnimationType(): Animation {
-        return mAnimationType.get()
+    fun setWindowData(winData: WindowData) {
+        mWindowData = winData
     }
-
-    fun create() {
-        mOnMediaListener.runInUserThread(Runnable {
-            synchronized(mMediaLock) {
-                mediaCreate()
-            }
-        })
+    fun setOnMediaListener(listener: OnMediaListener) {
+        mOnMediaListener = listener
     }
-    fun start() {
-        synchronized(mMediaLock) {
-            mediaStart()
+    fun getMediaTransformer(): MediaWindow.MediaTransformer {
+        return ColourElapseTransformer()
+        val type = Random.nextInt(10)
+        return when (type) {
+            0 -> FadeOutTransformer()
+            1 -> ZoomOutTransformer()
+            2 -> CircleOutTransformer()
+            3 -> MoveLeftTransformer()
+            4 -> MoveTopTransformer()
+            5 -> RotateHTransformer()
+            6 -> RotateVTransformer()
+            7 -> ShutterHVTransformer()
+            8 -> MosaicTransformer()
+            9 -> ColourElapseTransformer()
+            else -> FadeOutTransformer()
         }
-        isPlaying = true
     }
+
     fun draw(textureIndex: Int): Int {
-        if (!isPlaying) {
-            return textureIndex
-        }
-        synchronized(mMediaLock) {
-            mediaDraw(mMediaModel, mTextureId, textureIndex)
+        synchronized(this) {
+            mediaDraw(textureIndex)
         }
         return textureIndex + 1
     }
-    fun destroy() {
-        isPlaying = false
-        mOnMediaListener.runInUserThread(Runnable {
-            synchronized(mMediaLock) {
-                mediaDestroy()
-            }
-        })
-        mOnMediaListener.runInGLThread(Runnable {
-            if (mTextureId != 0) {
-                TextureUtils.unloadTexture(mTextureId)
-                mTextureId = 0
-            }
-        })
+
+    abstract fun mediaCreate()
+    abstract fun mediaDraw(textureIndex: Int): Int
+    abstract fun mediaDestroy()
+
+    protected fun drawImage(textureId: Int, textureIndex: Int): Int {
+        ShaderManager.drawImage(mMediaModel, textureId, textureIndex)
+        return textureIndex + 1
+    }
+    protected fun drawVideo(textureId: Int, textureIndex: Int): Int {
+        ShaderManager.drawVideo(mMediaModel, textureId, textureIndex)
+        return textureIndex + 1
     }
 
-    protected abstract fun mediaCreate()
-    protected abstract fun mediaBind()
-    protected abstract fun mediaStart()
-    protected abstract fun mediaDraw(mediaModel: MediaModel, textureId: Int, textureIndex: Int)
-    protected abstract fun mediaDestroy()
+    protected fun postInGLThread(runnable: Runnable) {
+        mOnMediaListener.runInGLThread(runnable)
+    }
 
     protected fun setTextureSize(texWidth: Int, texHeight: Int) {
-        textureInfo.setTextureSize(texWidth, texHeight)
-        mMediaModel.notifyMediaModelUpdated()
+        mTextureData.setTextureSize(texWidth, texHeight)
+        mMediaModel.notifyMediaModelUpdated(mWindowData, mTextureData)
     }
     fun setTextureShow(rect: Rect?) {
-        textureInfo.setTextureShow(rect)
-        mMediaModel.notifyMediaModelUpdated()
+        mTextureData.setTextureShow(rect)
+        mMediaModel.notifyMediaModelUpdated(mWindowData, mTextureData)
     }
     fun notifyMediaModelUpdated() {
-        mMediaModel.notifyMediaModelUpdated()
+        mMediaModel.notifyMediaModelUpdated(mWindowData, mTextureData)
     }
 
     protected fun notifyWindowShowChanged(rect: Rect?) {
-        mMediaModel.vertexBuffer.put(windowInfo.getVertexBuffer(rect)).position(0)
+        mMediaModel.vertexBuffer.put(mWindowData.getVertexBuffer(rect)).position(0)
     }
     protected fun notifyTextureShowChanged(rect: Rect?) {
-        mMediaModel.textureBuffer.put(textureInfo.getTextureBuffer(rect)).position(0)
+        mMediaModel.textureBuffer.put(mTextureData.getTextureBuffer(rect)).position(0)
     }
 
     protected fun notifyMediaCreated() {
-        mOnMediaListener.runInGLThread(Runnable {
-            synchronized(mMediaLock) {
-                mediaBind()
-            }
-        })
-    }
-    protected fun notifyMediaBinded(textureId: Int) {
-        mTextureId = textureId
+        mMediaModel.reset()
         mOnMediaListener.onCreated(this)
     }
     protected fun notifyMediaCompleted() {
@@ -104,13 +120,45 @@ abstract class MediaInfo internal constructor(winInfo: WindowInfo, listener: OnM
     protected fun notifyMediaDestroyed() {
         mOnMediaListener.onDestroyed(this)
     }
-    protected fun notifyMediaError(message: String) {
-        mOnMediaListener.onErrored(this, message)
+    protected fun notifyMediaFailed(message: String) {
+        mOnMediaListener.onFailed(this, message)
+    }
+
+    fun reset() {
+        mMediaModel.reset()
+    }
+    fun hide() {
+        mMediaModel.hide()
+    }
+    fun setScale(x: Float, y: Float, z: Float) {
+        mMediaModel.setScale(x, y, z)
+    }
+    fun setShutter(position: Float) {
+        mMediaModel.setShutter(position, mWindowData)
+    }
+    fun setRotate(a: Float, x: Float, y: Float, z: Float) {
+        mMediaModel.setRotate(a, x, y, z)
+    }
+    fun setRect(x: Float, y: Float) {
+        mMediaModel.setRect(x, y, mWindowData)
+    }
+    fun setMosaic(r: Float) {
+        mMediaModel.setMosaic(r, mTextureData)
+    }
+    fun setAlpha(a: Float) {
+        mMediaModel.setAlpha(a)
+    }
+    fun setCircle(l: Float) {
+        mMediaModel.setCircle(l, mWindowData)
+    }
+    fun setBright(l: Float) {
+        mMediaModel.setBright(l)
+    }
+    fun setThreshold(r: Float, g: Float, b: Float) {
+        mMediaModel.setThreshold(r, g, b, true)
     }
 
     interface OnMediaListener {
-
-        fun runInUserThread(r: Runnable)
 
         fun runInGLThread(r: Runnable)
 
@@ -118,211 +166,10 @@ abstract class MediaInfo internal constructor(winInfo: WindowInfo, listener: OnM
 
         fun onCompleted(m: MediaInfo)
 
-        fun onErrored(m: MediaInfo, msg: String)
+        fun onFailed(m: MediaInfo, msg: String)
 
         fun onDestroyed(m: MediaInfo)
 
     }
 
-    sealed class Animation {
-        object Random : Animation()
-        object FadeInOut : Animation()
-        object ZoomIn : Animation()
-        object ZoomOut : Animation()
-        object RotateH : Animation()
-        object RotateV : Animation()
-        object CircleIn : Animation()
-        object CircleOut : Animation()
-        object Mosaic : Animation()
-        object MoveLeft : Animation()
-        object MoveTop : Animation()
-        object Shutter : Animation()
-
-        fun get(): Animation {
-            return if (this != Animation.Random) { this } else {
-                val random = Random().nextInt(11) + 1
-                return when(random) {
-                    1 -> FadeInOut
-                    2 -> ZoomIn
-                    3 -> ZoomOut
-                    4 -> RotateH
-                    5 -> RotateV
-                    6 -> CircleIn
-                    7 -> CircleOut
-                    8 -> Mosaic
-                    9 -> MoveLeft
-                    10 -> MoveTop
-                    else -> Shutter
-                }
-            }
-        }
-        fun normal(mediaInfo: MediaInfo, textureIndex: Int): Int {
-            mediaInfo.mMediaModel.reset()
-            return mediaInfo.draw(textureIndex)
-        }
-        fun font(mediaInfo: MediaInfo, textureIndex: Int): Int {
-            mediaInfo.mMediaModel.setThreshold(0, 0, 0, true)
-            return mediaInfo.draw(textureIndex)
-        }
-        fun update(mediaInfo1: MediaInfo?, mediaInfo2: MediaInfo?, textureIndex: Int, ratio: Float): Int {
-            var index = textureIndex
-            when (this) {
-                FadeInOut -> {
-                    if (mediaInfo1 != null) {
-                        mediaInfo1.mMediaModel.reset()
-                        mediaInfo1.mMediaModel.setAlpha(1 - ratio)
-                        index = mediaInfo1.draw(index)
-                    }
-                    if (mediaInfo2 != null) {
-                        mediaInfo2.mMediaModel.reset()
-                        mediaInfo2.mMediaModel.setAlpha(ratio)
-                        index = mediaInfo2.draw(index)
-                    }
-                }
-                ZoomIn -> {
-                    if (mediaInfo2 != null) {
-                        mediaInfo2.mMediaModel.reset()
-                        index = mediaInfo2.draw(index)
-                    }
-                    if (mediaInfo1 != null) {
-                        mediaInfo1.mMediaModel.reset()
-                        mediaInfo1.mMediaModel.setScale(1.0f - ratio, 1.0f - ratio, 1.0f)
-                        index = mediaInfo1.draw(index)
-                    }
-                }
-                ZoomOut -> {
-                    if (mediaInfo1 != null) {
-                        mediaInfo1.mMediaModel.reset()
-                        index = mediaInfo1.draw(index)
-                    }
-                    if (mediaInfo2 != null) {
-                        mediaInfo2.mMediaModel.reset()
-                        mediaInfo2.mMediaModel.setScale(ratio, ratio, 1.0f)
-                        index = mediaInfo2.draw(index)
-                    }
-                }
-                RotateH -> {
-                    if (ratio < 0.5f) {
-                        if (mediaInfo1 != null) {
-                            mediaInfo1.mMediaModel.reset()
-                            mediaInfo1.mMediaModel.setRotate(180 * ratio, 0.0f, 1.0f, 0.0f)
-                            index = mediaInfo1.draw(index)
-                        }
-                    } else {
-                        if (mediaInfo2 != null) {
-                            mediaInfo2.mMediaModel.reset()
-                            mediaInfo2.mMediaModel.setRotate(-180 * (1 - ratio), 0.0f, 1.0f, 0.0f)
-                            index = mediaInfo2.draw(index)
-                        }
-                    }
-                }
-                RotateV -> {
-                    if (ratio < 0.5f) {
-                        if (mediaInfo1 != null) {
-                            mediaInfo1.mMediaModel.reset()
-                            mediaInfo1.mMediaModel.setRotate(180 * ratio, 1.0f, 0.0f, 0.0f)
-                            index = mediaInfo1.draw(index)
-                        }
-                    } else {
-                        if (mediaInfo2 != null) {
-                            mediaInfo2.mMediaModel.reset()
-                            mediaInfo2.mMediaModel.setRotate(-180 * (1 - ratio), 1.0f, 0.0f, 0.0f)
-                            index = mediaInfo2.draw(index)
-                        }
-                    }
-                }
-                CircleIn -> {
-                    if (mediaInfo2 != null) {
-                        mediaInfo2.mMediaModel.reset()
-                        index = mediaInfo2.draw(index)
-                    }
-                    if (mediaInfo1 != null) {
-                        mediaInfo1.mMediaModel.reset()
-                        mediaInfo1.mMediaModel.setCircle(1 - ratio)
-                        index = mediaInfo1.draw(index)
-                    }
-                }
-                CircleOut -> {
-                    if (mediaInfo1 != null) {
-                        mediaInfo1.mMediaModel.reset()
-                        index = mediaInfo1.draw(index)
-                    }
-                    if (mediaInfo2 != null) {
-                        mediaInfo2.mMediaModel.reset()
-                        mediaInfo2.mMediaModel.setCircle(ratio)
-                        index = mediaInfo2.draw(index)
-                    }
-                }
-                Mosaic -> {
-                    if (ratio < 0.5f) {
-                        if (mediaInfo1 != null) {
-                            mediaInfo1.mMediaModel.reset()
-                            mediaInfo1.mMediaModel.setMosaic(ratio)
-                            index = mediaInfo1.draw(index)
-                        }
-                    } else {
-                        if (mediaInfo2 != null) {
-                            mediaInfo2.mMediaModel.reset()
-                            mediaInfo2.mMediaModel.setMosaic(1 - ratio)
-                            index = mediaInfo2.draw(index)
-                        }
-                    }
-                }
-                MoveLeft -> {
-                    if (mediaInfo2 != null) {
-                        mediaInfo2.mMediaModel.reset()
-                        index = mediaInfo2.draw(index)
-                    }
-                    if (mediaInfo1 != null) {
-                        mediaInfo1.mMediaModel.reset()
-                        mediaInfo1.mMediaModel.setRect(1 - ratio, 1.0f)
-                        index = mediaInfo1.draw(index)
-                    }
-                }
-                MoveTop -> {
-                    if (mediaInfo2 != null) {
-                        mediaInfo2.mMediaModel.reset()
-                        index = mediaInfo2.draw(index)
-                    }
-                    if (mediaInfo1 != null) {
-                        mediaInfo1.mMediaModel.reset()
-                        mediaInfo1.mMediaModel.setRect(1.0f, 1 - ratio)
-                        index = mediaInfo1.draw(index)
-                    }
-                }
-                Shutter -> {
-                    if (mediaInfo1 != null) {
-                        mediaInfo1.mMediaModel.reset()
-                        index = mediaInfo1.draw(index)
-                    }
-                    if (mediaInfo2 != null) {
-                        mediaInfo2.mMediaModel.reset()
-                        mediaInfo2.mMediaModel.setShutter(ratio)
-                        index = mediaInfo2.draw(index)
-                    }
-                }
-            }
-            return index
-        }
-    }
-
-    companion object {
-
-        fun from(context: Context, filePath: String, winInfo: WindowInfo, listener: OnMediaListener): MediaInfo {
-            var filters = context.resources.getStringArray(R.array.type_image)
-            for (f in filters) {
-                if (filePath.endsWith(f, true)) {
-                    return ImageInfo(filePath, winInfo, listener)
-                }
-            }
-            filters = context.resources.getStringArray(R.array.type_video)
-            for (f in filters) {
-                if (filePath.endsWith(f, true)) {
-                    return VideoInfo(context, filePath, winInfo, listener)
-                }
-            }
-            throw IllegalStateException("file:$filePath is not a media")
-        }
-
-    }
 }

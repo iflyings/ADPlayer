@@ -1,8 +1,8 @@
-package com.android.iflyings.player.info
+package com.android.iflyings.player.model
 
 import android.graphics.Rect
 
-class WindowInfo {
+class WindowData {
 
     private var mWinRect: Rect? = null
 
@@ -45,6 +45,10 @@ class WindowInfo {
     fun setWindowSize(rect: Rect?) {
         mWinRect = rect
         update(rect, screenWidth, screenHeight)
+    }
+
+    fun isAvailable(): Boolean {
+        return screenWidth > 0 && screenHeight > 0
     }
 
     private fun update(rect: Rect?, width: Int, height: Int) {

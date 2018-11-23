@@ -1,8 +1,8 @@
-package com.android.iflyings.player.info
+package com.android.iflyings.player.model
 
 import android.graphics.Rect
 
-class TextureInfo {
+class TextureData {
     private var mTexRect: Rect? = null
     var texWidth = 0
         private set
@@ -34,6 +34,10 @@ class TextureInfo {
 
     fun setTextureShow(rect: Rect?) {
         mTexRect = rect
+    }
+
+    fun isAvailable(): Boolean {
+        return texWidth > 0 && texHeight > 0
     }
 
     fun getTextureBuffer(rect: Rect?): FloatArray {
